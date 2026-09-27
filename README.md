@@ -115,7 +115,6 @@ changing what gets pulled out of the source tree.
 - The green fog is an exponential approximation rather than the three scrolling
   plasma textures.
 - No shadow maps.
-- No boot sound.
 
 ## Credits
 
@@ -123,3 +122,19 @@ Built by [Team Resurgent](https://github.com/Team-Resurgent). The animation it
 reproduces was originally created by Pipeworks Software for Microsoft; geometry
 and timing were derived from that work for interoperability and preservation,
 and all Xbox trademarks belong to their respective owners.
+
+## License
+
+This project is licensed under the GNU General Public License v3.0. The full
+text is in [LICENSE](LICENSE).
+
+Flubber Forge is **based on the original Xbox boot animation created by
+Pipeworks Software for Microsoft**. The design, geometry, camera paths, timing
+and sound score of that animation are the work of its original authors. This is
+an independent reimplementation for interoperability, documentation and
+preservation, and it is not affiliated with, authorised by or endorsed by
+Microsoft or Pipeworks Software.
+
+The GPL covers the source code in this repository. It does not grant any rights
+in the underlying original work or in any third-party trademarks. See
+[NOTICE](NOTICE) for the full attribution.

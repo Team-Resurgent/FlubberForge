@@ -1,0 +1,27 @@
+Flubber Forge
+Copyright (C) 2026 Team Resurgent
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU General Public License as published by the Free Software
+Foundation, either version 3 of the License, or (at your option) any later
+version. See the LICENSE file for the full text.
+
+
+Attribution
+-----------
+
+Flubber Forge is based on the original Xbox boot animation, which was created
+by Pipeworks Software for Microsoft. The animation's design, geometry, camera
+paths, timing and sound score are the work of those original authors.
+
+This project is an independent reimplementation written for interoperability,
+documentation and preservation. It is not affiliated with, authorised by,
+sponsored by or endorsed by Microsoft or Pipeworks Software.
+
+Xbox and all related names, logos and marks are trademarks of Microsoft
+Corporation. They are used here only to identify the work being reproduced,
+and no claim is made to them.
+
+The GNU General Public License applies to the source code of this project. It
+does not, and cannot, grant any rights in the underlying original work or in
+any third-party trademarks.
