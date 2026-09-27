@@ -69,24 +69,13 @@ const state = {
   cameraKey: -1,
   lastStamp: 0,
   audio: null,
-  isolate: -1,
+  bootSoundData: null,
 };
 
-function setIsolate(n) {
-  const count = official.ready ? official.data.instances.length : 0;
-  if (!Number.isFinite(n) || n < 0) state.isolate = -1;
-  else if (!count) state.isolate = n | 0;
-  else state.isolate = Math.max(0, Math.min(count - 1, n | 0));
-  const input = document.getElementById("prim");
-  if (input && document.activeElement !== input) input.value = String(state.isolate);
-  const label = document.getElementById("prim-label");
-  if (!label) return;
-  if (state.isolate < 0 || !official.ready) label.textContent = "all";
-  else {
-    const inst = official.data.instances[state.isolate];
-    label.textContent = (inst.kind || "mesh") + " " + state.isolate;
-  }
-}
+// Optional: present only after tools/extract-sound.js has been run.
+loadBootSound("sound/").then((data) => {
+  state.bootSoundData = data;
+});
 
 function rebuildCamera() {
   let mode = state.theme.cameraMode | 0;
@@ -102,40 +91,201 @@ function frame(width, height, t, theme) {
   drawOfficial(width, height, t, theme);
 }
 
+// Audio is an original score wired to the animation's own timeline rather than
+// a loop playing alongside it: the chamber drone tracks blob intensity, each of
+// the twelve blob pulses fires a thump at its own time, and the shield fade-in
+// and finish dive get their own swells. Load a file with the Audio button to
+// play that instead of the synth.
+
+function pinkNoise(ctx) {
+  const len = Math.floor(ctx.sampleRate * 2);
+  const buf = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = buf.getChannelData(0);
+  let b0 = 0;
+  let b1 = 0;
+  let b2 = 0;
+  for (let i = 0; i < len; i++) {
+    const w = Math.random() * 2 - 1;
+    // White noise reads as hiss under the drone; this rolls it towards pink.
+    b0 = 0.99765 * b0 + w * 0.0990460;
+    b1 = 0.96300 * b1 + w * 0.2965164;
+    b2 = 0.57555 * b2 + w * 1.0526913;
+    d[i] = (b0 + b1 + b2 + w * 0.1848) * 0.2;
+  }
+  return buf;
+}
+
+function soundEvents(pulses) {
+  const ev = pulses.map((p) => ({ t: p.x, kind: "thump", amp: clamp(p.z, 0.1, 1) }));
+  ev.push({ t: SHIELD_FADE_IN_START, kind: "swell", amp: 0.35, dur: SHIELD_FADE_IN_DELTA });
+  ev.push({ t: FINISH_START_TIME, kind: "sweep", amp: 0.5, dur: FINISH_TRANSITION_TIME });
+  ev.push({ t: TEXT_ANIM_START, kind: "chime", amp: 0.5 });
+  return ev.sort((a, b) => a.t - b.t);
+}
+
+function fireThump(a, amp) {
+  const now = a.ctx.currentTime;
+  const osc = a.ctx.createOscillator();
+  osc.type = "sine";
+  osc.frequency.setValueAtTime(130, now);
+  osc.frequency.exponentialRampToValueAtTime(40, now + 0.3);
+  const g = a.ctx.createGain();
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(0.5 * amp, now + 0.012);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+  osc.connect(g);
+  g.connect(a.master);
+  osc.start(now);
+  osc.stop(now + 0.55);
+}
+
+function fireNoise(a, amp, dur, f0, f1, q) {
+  const now = a.ctx.currentTime;
+  const src = a.ctx.createBufferSource();
+  src.buffer = a.noise;
+  src.loop = true;
+  const bp = a.ctx.createBiquadFilter();
+  bp.type = "bandpass";
+  bp.Q.value = q;
+  bp.frequency.setValueAtTime(f0, now);
+  bp.frequency.exponentialRampToValueAtTime(f1, now + dur);
+  const g = a.ctx.createGain();
+  g.gain.setValueAtTime(0.0001, now);
+  g.gain.exponentialRampToValueAtTime(amp, now + dur * 0.45);
+  g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+  src.connect(bp);
+  bp.connect(g);
+  g.connect(a.master);
+  src.start(now);
+  src.stop(now + dur + 0.05);
+}
+
+function fireChime(a, amp) {
+  const now = a.ctx.currentTime;
+  // A soft open fifth with an octave on top, swelling rather than struck.
+  for (const [mul, level, delay] of [[1, 1, 0], [1.5, 0.6, 0.04], [2, 0.42, 0.08]]) {
+    const osc = a.ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = 294 * mul;
+    const g = a.ctx.createGain();
+    const at = now + delay;
+    g.gain.setValueAtTime(0.0001, at);
+    g.gain.exponentialRampToValueAtTime(amp * level * 0.32, at + 0.12);
+    g.gain.exponentialRampToValueAtTime(0.0001, at + 1.7);
+    osc.connect(g);
+    g.connect(a.master);
+    osc.start(at);
+    osc.stop(at + 1.8);
+  }
+}
+
+function fireEvent(a, e) {
+  if (e.kind === "thump") fireThump(a, e.amp);
+  else if (e.kind === "swell") fireNoise(a, e.amp, e.dur, 220, 900, 1.1);
+  else if (e.kind === "sweep") fireNoise(a, e.amp, e.dur, 400, 3200, 0.8);
+  else if (e.kind === "chime") fireChime(a, e.amp);
+}
+
+// The engine expects sos_main once per 5 ms tick, so the animation clock is
+// converted into a tick count and the sequencer is stepped up to it. Seeking
+// backwards restarts the sequence, since the queue has no way to rewind.
+function driveBootSound(a, t) {
+  const want = Math.max(0, Math.floor(t / (SND_TICK_MS / 1000)));
+  if (want < a.engineTicks || t <= 0) {
+    a.engine.start();
+    a.engineTicks = 0;
+  }
+  let budget = 4000;
+  while (a.engineTicks < want && budget-- > 0) {
+    a.engine.tick();
+    a.engineTicks++;
+  }
+}
+
 function updateSound(t, intensity) {
-  const audio = state.audio;
-  if (!audio) return;
-  const now = audio.ctx.currentTime;
-  const gain = clamp(intensity, 0, 1.4) * 0.07;
-  audio.master.gain.setTargetAtTime(t >= DEMO_TOTAL_TIME ? 0 : gain, now, 0.08);
-  audio.osc.frequency.setTargetAtTime(46 + intensity * 36, now, 0.08);
-  audio.filter.frequency.setTargetAtTime(180 + intensity * 900, now, 0.08);
+  const a = state.audio;
+  if (!a) return;
+  const now = a.ctx.currentTime;
+  a.master.gain.setTargetAtTime(1, now, 0.05);
+
+  if (a.engine) {
+    driveBootSound(a, t);
+    return;
+  }
+
+  const fade = t >= FINISH_STOP_TIME ? 0 : 1;
+  a.drone.gain.setTargetAtTime(clamp(intensity, 0, 1.4) * 0.05 * fade, now, 0.08);
+  a.droneFilter.frequency.setTargetAtTime(180 + intensity * 900, now, 0.08);
+
+  const prev = a.lastT;
+  a.lastT = t;
+  // A jump means a scrub or a loop, so skip rather than dumping every missed
+  // event into the same frame.
+  if (prev === null || t < prev || t - prev > 0.25) return;
+  for (const e of a.events) {
+    if (e.t > prev && e.t <= t) fireEvent(a, e);
+  }
 }
 
 function ensureSound() {
   if (state.audio) {
     if (state.audio.ctx.state === "suspended") state.audio.ctx.resume();
-    return;
+    return state.audio;
   }
   const ctx = new AudioContext();
   const master = ctx.createGain();
   master.gain.value = 0;
   master.connect(ctx.destination);
-  const osc = ctx.createOscillator();
-  osc.type = "sawtooth";
-  osc.frequency.value = 55;
-  const filter = ctx.createBiquadFilter();
-  filter.type = "lowpass";
-  filter.frequency.value = 240;
-  osc.connect(filter);
-  filter.connect(master);
-  osc.start();
-  state.audio = { ctx, master, osc, filter };
+
+  const drone = ctx.createGain();
+  drone.gain.value = 0;
+  const droneFilter = ctx.createBiquadFilter();
+  droneFilter.type = "lowpass";
+  droneFilter.frequency.value = 240;
+  droneFilter.connect(drone);
+  drone.connect(master);
+  // Two saws a few cents apart plus a sub, so the chamber has some movement.
+  for (const detune of [-7, 7]) {
+    const osc = ctx.createOscillator();
+    osc.type = "sawtooth";
+    osc.frequency.value = 55;
+    osc.detune.value = detune;
+    osc.connect(droneFilter);
+    osc.start();
+  }
+  const sub = ctx.createOscillator();
+  sub.type = "sine";
+  sub.frequency.value = 27.5;
+  sub.connect(droneFilter);
+  sub.start();
+
+  state.audio = {
+    ctx,
+    master,
+    drone,
+    droneFilter,
+    noise: pinkNoise(ctx),
+    events: soundEvents(state.pulses),
+    lastT: null,
+    engine: null,
+    engineTicks: 0,
+  };
+
+  // When the converted sequence is present, the real engine replaces the
+  // fallback cue entirely.
+  if (state.bootSoundData) {
+    const voices = new SoundVoices(ctx, master, buildSoundWaves(), state.bootSoundData.samples);
+    state.audio.engine = new BootSoundEngine(voices, state.bootSoundData);
+    state.audio.engine.start();
+  }
+  return state.audio;
 }
 
 function stopSound() {
-  if (!state.audio) return;
-  state.audio.master.gain.setTargetAtTime(0, state.audio.ctx.currentTime, 0.05);
+  const a = state.audio;
+  if (!a) return;
+  a.master.gain.setTargetAtTime(0, a.ctx.currentTime, 0.05);
+  a.lastT = null;
 }
 
 function resize() {
@@ -165,7 +315,6 @@ function tick(stamp) {
   const scrub = document.getElementById("scrub");
   if (document.activeElement !== scrub) scrub.value = String(state.time);
   document.getElementById("clock").textContent = state.time.toFixed(2) + "s";
-  if (official.ready) setIsolate(state.isolate);
   requestAnimationFrame(tick);
 }
 
@@ -277,21 +426,6 @@ function wireUi() {
     state.cameraKey = -1;
     syncThemeControls();
   });
-  function stepPrimitive(delta) {
-    const count = official.data ? official.data.instances.length : 0;
-    if (!count) return;
-    const cur = state.isolate < 0 ? -1 : state.isolate;
-    let next = cur + delta;
-    if (next < -1) next = count - 1;
-    if (next >= count) next = -1;
-    setIsolate(next);
-  }
-  document.getElementById("prim-prev").addEventListener("click", () => stepPrimitive(-1));
-  document.getElementById("prim-next").addEventListener("click", () => stepPrimitive(1));
-  document.getElementById("prim").addEventListener("change", (e) => {
-    const n = parseInt(e.target.value, 10);
-    setIsolate(Number.isFinite(n) ? n : -1);
-  });
   window.addEventListener("keydown", (e) => {
     if (e.target && (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA")) return;
     if (e.code === "Space") {
@@ -320,7 +454,6 @@ wireUi();
 resize();
 
 const bootParams = new URLSearchParams(location.search);
-if (bootParams.has("prim")) setIsolate(parseInt(bootParams.get("prim"), 10));
 if (bootParams.has("t")) {
   state.time = parseFloat(bootParams.get("t")) || 0;
   state.playing = bootParams.get("play") !== "0";

@@ -5,5 +5,8 @@ shots/
 node_modules/
 *.user
 
+# Reference recordings and offline renders used to calibrate the sound port.
+analysis/
+
 tools/DevServer/bin/
 tools/DevServer/obj/

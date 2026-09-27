@@ -15,7 +15,10 @@ const OO_MAX_INTENSITY_DELTA = 1 / MAX_INTENSITY_DELTA;
 const BLOB_SIM_DT = 1 / 60;
 const BLOB_BASE_INTENSITY = 0.3;
 
-// app.cpp blobLight. Ambient is black, so the scene's ambient term vanishes.
+// app.cpp blobLight. Ambient is black, so the scene's ambient term vanishes:
+// primitive_set multiplies SceneAmbient by this, so the theme colour never
+// reaches the screen no matter what it is set to.
+const BLOB_LIGHT_AMBIENT = 0.0;
 const BLOB_LIGHT_DIFFUSE = 0.13;
 const BLOB_LIGHT_SPECULAR = 1.0;
 const BLOB_LIGHT_ATTEN0 = 1.0;

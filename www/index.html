@@ -41,25 +41,33 @@
       padding: 12px 14px 8px; border-bottom: 1px solid var(--line);
     }
     aside header h1 {
+      position: relative; display: inline-block;
       margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 0.06em;
       color: #cfffbe;
       /* The blob's own glow: a tight white-green core bleeding out to the
-         Shield colour, breathing at roughly the pulse rate. */
+         Shield colour. The bright layer below rides the live blob intensity,
+         so the title swells on exactly the pulses the animation is drawing. */
       text-shadow:
         0 0 4px #dcffd0, 0 0 10px #66ff4d, 0 0 22px rgba(102, 255, 77, 0.75),
         0 0 44px rgba(64, 210, 48, 0.45);
-      animation: flubber 3.4s ease-in-out infinite;
     }
-    @keyframes flubber {
-      50% {
-        color: #f2fff0;
-        text-shadow:
-          0 0 5px #ffffff, 0 0 14px #8dff70, 0 0 34px rgba(102, 255, 77, 0.9),
-          0 0 64px rgba(80, 230, 60, 0.6);
-      }
+    aside header h1::after {
+      content: attr(data-text);
+      position: absolute; left: 0; top: 0; pointer-events: none;
+      color: #f2fff0;
+      text-shadow:
+        0 0 5px #ffffff, 0 0 14px #8dff70, 0 0 34px rgba(102, 255, 77, 0.9),
+        0 0 64px rgba(80, 230, 60, 0.6);
+      opacity: var(--flubber, 0);
     }
-    @media (prefers-reduced-motion: reduce) { aside header h1 { animation: none; } }
+    @media (prefers-reduced-motion: reduce) {
+      aside header h1::after { opacity: 0.5; }
+    }
     aside header p { margin: 6px 0 0; color: var(--muted); }
+    aside header p.byline {
+      margin-top: 4px; font-size: 11px; letter-spacing: 0.08em;
+      text-transform: uppercase; color: #8fca7e;
+    }
     #fields { overflow: auto; padding: 8px 14px 16px; }
     #fields h2 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
     .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 4px 0; }
@@ -79,16 +87,13 @@
       <input id="scrub" type="range" min="0" max="8" step="0.01" value="0" />
       <span id="clock">0.00s</span>
       <label class="check"><input id="loop" type="checkbox" checked /> Loop</label>
-      <button id="prim-prev" type="button" title="Previous primitive">◀</button>
-      <input id="prim" type="number" min="-1" step="1" value="-1" title="Primitive index, -1 draws the whole scene" />
-      <button id="prim-next" type="button" title="Next primitive">▶</button>
-      <span id="prim-label">all</span>
       <label class="check"><input id="sound" type="checkbox" /> Sound</label>
     </div>
   </div>
   <aside>
     <header>
-      <h1>Flubber Forge</h1>
+      <h1 data-text="Flubber Forge">Flubber Forge</h1>
+      <p class="byline">by EqUiNoX / Team Resurgent</p>
       <p>bootanim.ini colors. Space pauses, R restarts.</p>
     </header>
     <div id="fields"></div>
@@ -98,6 +103,9 @@
       <button id="reset" type="button">Reset</button>
     </div>
   </aside>
+  <script src="sound/waves.js"></script>
+  <script src="sound/voices.js"></script>
+  <script src="sound/engine.js"></script>
   <script src="theme.js"></script>
   <script src="camera.js"></script>
   <script src="blob.js"></script>

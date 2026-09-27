@@ -599,15 +599,18 @@ function slashTextures(gl, theme) {
 
 // primitive_set::render: theme colour times the blob light colour times the
 // blob intensity. The blob light's ambient is black, so ambient drops out.
-function drawScene(gl, data, theme, shot, view, proj, energy, fpos, isolated, isolatedWorld) {
+function drawScene(gl, data, theme, shot, view, proj, energy, fpos) {
   const prog = official.sceneProg;
   gl.useProgram(prog);
   gl.uniform3f(gl.getUniformLocation(prog, "uCam"), shot.pos.x, shot.pos.y, shot.pos.z);
-  const intense = isolated ? 1 : Math.max(0, energy.blob) * (theme.sceneIntensity || 1);
+  const intense = Math.max(0, energy.blob) * (theme.sceneIntensity || 1);
   const dif = rgb(theme.sceneDiffuse).map((c) => c * BLOB_LIGHT_DIFFUSE * intense);
   const spe = rgb(theme.sceneSpecular).map((c) => c * BLOB_LIGHT_SPECULAR * intense);
   const ooIntensity = intense > 0 ? 1 / intense : 0;
-  gl.uniform3fv(gl.getUniformLocation(prog, "uAmbient"), isolated ? [0.12, 0.12, 0.12] : [0, 0, 0]);
+  gl.uniform3fv(
+    gl.getUniformLocation(prog, "uAmbient"),
+    rgb(theme.sceneAmbient).map((c) => c * BLOB_LIGHT_AMBIENT)
+  );
   gl.uniform3fv(gl.getUniformLocation(prog, "uDiffuse"), dif);
   gl.uniform3fv(gl.getUniformLocation(prog, "uSpec"), spe);
   gl.uniform3fv(gl.getUniformLocation(prog, "uAtten"), [
@@ -616,13 +619,9 @@ function drawScene(gl, data, theme, shot, view, proj, energy, fpos, isolated, is
     BLOB_LIGHT_ATTEN2 * ooIntensity,
   ]);
   const lightLoc = gl.getUniformLocation(prog, "uLightPos");
-  const list = isolated ? [isolated] : data.instances;
-  for (const inst of list) {
-    const world = inst === isolated ? isolatedWorld : worldOf(data, inst, fpos);
-    const lp = isolated
-      ? [shot.pos.x, shot.pos.y, shot.pos.z]
-      : official.blob.sim.lightFor([world[12], world[13], world[14]]);
-    gl.uniform3fv(lightLoc, lp);
+  for (const inst of data.instances) {
+    const world = worldOf(data, inst, fpos);
+    gl.uniform3fv(lightLoc, official.blob.sim.lightFor([world[12], world[13], world[14]]));
     drawMesh(gl, prog, official.gpu[inst.mesh], world, view, proj, theme.sceneWireframe);
   }
 }
@@ -859,15 +858,22 @@ function makeBlobGpu(gl) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  // BlobWireframe needs the strips as edges, since WebGL has no fill mode.
+  const bodyLines = stripToLines(sim.sphere.idx);
+  const dropLines = stripToLines(sim.bloblet.idx);
   return {
     sim,
     us: buf(gl.ARRAY_BUFFER, new Float32Array(sim.sphere.pos), gl.STATIC_DRAW),
     idx: buf(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(sim.sphere.idx), gl.STATIC_DRAW),
     count: sim.sphere.idx.length,
+    line: buf(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(bodyLines), gl.STATIC_DRAW),
+    lineCount: bodyLines.length,
     changing: buf(gl.ARRAY_BUFFER, sim.changing, gl.DYNAMIC_DRAW),
     dropUs: buf(gl.ARRAY_BUFFER, new Float32Array(sim.bloblet.pos), gl.STATIC_DRAW),
     dropIdx: buf(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(sim.bloblet.idx), gl.STATIC_DRAW),
     dropCount: sim.bloblet.idx.length,
+    dropLine: buf(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(dropLines), gl.STATIC_DRAW),
+    dropLineCount: dropLines.length,
     halo,
     quad: gl.createBuffer(),
   };
@@ -884,6 +890,9 @@ function drawBlob(gl, t, theme, shot, view, proj, energy) {
   const eye = [shot.pos.x, shot.pos.y, shot.pos.z];
   const glow = rgb(theme.blobGlow);
   const base = rgb(theme.blobColor);
+  // blob::render sets D3DRS_FILLMODE once up front, so the flag covers the
+  // halo quad and the bloblets as well as the body.
+  const wire = theme.blobWireframe;
 
   // Camera-facing halo quad, additive.
   const ctw = camToWorld(shot.pos, shot.look);
@@ -922,7 +931,7 @@ function drawBlob(gl, t, theme, shot, view, proj, energy) {
   gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 20, 0);
   gl.enableVertexAttribArray(locUv);
   gl.vertexAttribPointer(locUv, 2, gl.FLOAT, false, 20, 12);
-  gl.drawArrays(gl.TRIANGLE_FAN, 0, 4);
+  gl.drawArrays(wire ? gl.LINE_LOOP : gl.TRIANGLE_FAN, 0, 4);
   gl.disableVertexAttribArray(locUv);
   gl.depthMask(true);
   gl.disable(gl.BLEND);
@@ -952,8 +961,13 @@ function drawBlob(gl, t, theme, shot, view, proj, energy) {
   gl.bufferData(gl.ARRAY_BUFFER, sim.changing, gl.DYNAMIC_DRAW);
   gl.enableVertexAttribArray(aNrm);
   gl.vertexAttribPointer(aNrm, 4, gl.FLOAT, false, 0, 0);
-  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, blob.idx);
-  gl.drawElements(gl.TRIANGLE_STRIP, blob.count, gl.UNSIGNED_SHORT, 0);
+  gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, wire ? blob.line : blob.idx);
+  gl.drawElements(
+    wire ? gl.LINES : gl.TRIANGLE_STRIP,
+    wire ? blob.lineCount : blob.count,
+    gl.UNSIGNED_SHORT,
+    0
+  );
   gl.disableVertexAttribArray(aNrm);
 
   // The bloblets.
@@ -971,7 +985,7 @@ function drawBlob(gl, t, theme, shot, view, proj, energy) {
     gl.bindBuffer(gl.ARRAY_BUFFER, blob.dropUs);
     gl.enableVertexAttribArray(dUs);
     gl.vertexAttribPointer(dUs, 3, gl.FLOAT, false, 0, 0);
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, blob.dropIdx);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, wire ? blob.dropLine : blob.dropIdx);
     for (let i = 0; i < sim.numBloblets; i++) {
       const drop = sim.bloblets[i];
       const perp = drop.fRadius / Math.sqrt(drop.fWobble);
@@ -984,7 +998,12 @@ function drawBlob(gl, t, theme, shot, view, proj, energy) {
         pmp * drop.vDirection[1],
         pmp * drop.vDirection[2],
       ]);
-      gl.drawElements(gl.TRIANGLE_STRIP, blob.dropCount, gl.UNSIGNED_SHORT, 0);
+      gl.drawElements(
+        wire ? gl.LINES : gl.TRIANGLE_STRIP,
+        wire ? blob.dropLineCount : blob.dropCount,
+        gl.UNSIGNED_SHORT,
+        0
+      );
     }
     gl.disable(gl.BLEND);
   }
@@ -1030,69 +1049,9 @@ async function loadOfficial(canvas) {
   official.blob = makeBlobGpu(gl);
   official.shieldProg = program(gl, VS_SHIELD, FS_SHIELD);
   official.shields = makeShieldGpu(gl, state.pulseRand);
-  official.bounds = data.meshes.map((mesh) => {
-    const min = [Infinity, Infinity, Infinity];
-    const max = [-Infinity, -Infinity, -Infinity];
-    const pos = mesh.pos;
-    for (let i = 0; i < pos.length; i += 3) {
-      for (let k = 0; k < 3; k++) {
-        min[k] = Math.min(min[k], pos[i + k]);
-        max[k] = Math.max(max[k], pos[i + k]);
-      }
-    }
-    return { min, max };
-  });
   // Baked once at startup, as in app init, so later theme edits do not change it.
   official.envCube = makeReflectionCubeMap(gl, data, state.theme);
   official.ready = true;
-}
-
-function frameShot(inst, world) {
-  const box = official.bounds[inst.mesh];
-  const corners = [];
-  for (const x of [box.min[0], box.max[0]]) {
-    for (const y of [box.min[1], box.max[1]]) {
-      for (const z of [box.min[2], box.max[2]]) {
-        corners.push(v3(
-          x * world[0] + y * world[4] + z * world[8] + world[12],
-          x * world[1] + y * world[5] + z * world[9] + world[13],
-          x * world[2] + y * world[6] + z * world[10] + world[14]
-        ));
-      }
-    }
-  }
-  let center = v3(0, 0, 0);
-  for (const p of corners) center = vadd(center, p);
-  center = vscale(center, 1 / corners.length);
-  let radius = 0.05;
-  for (const p of corners) radius = Math.max(radius, vlen(vsub(p, center)));
-  const mid = [
-    (box.min[0] + box.max[0]) * 0.5,
-    (box.min[1] + box.max[1]) * 0.5,
-    (box.min[2] + box.max[2]) * 0.5,
-  ];
-  const end = (axis, value) => {
-    const p = mid.slice();
-    p[axis] = value;
-    return v3(
-      p[0] * world[0] + p[1] * world[4] + p[2] * world[8] + world[12],
-      p[0] * world[1] + p[1] * world[5] + p[2] * world[9] + world[13],
-      p[0] * world[2] + p[1] * world[6] + p[2] * world[10] + world[14]
-    );
-  };
-  const spans = [0, 1, 2].map((axis) => vsub(end(axis, box.max[axis]), end(axis, box.min[axis])));
-  let long = spans[0];
-  for (const span of spans) if (vlen(span) > vlen(long)) long = span;
-  let side = vcross(long, v3(0, 0, 1));
-  if (vlen(side) < 1e-3) side = vcross(long, v3(0, 1, 0));
-  const eye = vnorm(vadd(vnorm(side), vscale(vnorm(long), 0.28)));
-  const dist = radius / Math.tan(Math.PI / 8) * 1.25;
-  return {
-    pos: vadd(center, vscale(eye, dist)),
-    look: center,
-    renderGeom: true,
-    renderSlash: false,
-  };
 }
 
 function worldOf(data, inst, fpos) {
@@ -1129,25 +1088,30 @@ function drawMesh(gl, prog, gpu, world, view, proj, wire) {
   }
 }
 
+// The title's bright layer tracks getBlobIntensity, so it breathes with the
+// blob rather than on its own timer. Quantised so a frame that barely moves the
+// intensity does not trigger a restyle.
+let titleGlow = -1;
+
+function setTitleGlow(intensity) {
+  const v = Math.round(Math.min(1, Math.max(0, intensity)) * 50) / 50;
+  if (v === titleGlow) return;
+  titleGlow = v;
+  document.documentElement.style.setProperty("--flubber", String(v));
+}
+
 function drawOfficial(width, height, t, theme) {
   if (!official.ready) return;
   const gl = official.gl;
   const data = official.data;
   rebuildCamera();
   const fpos = (t - SCENE_ANIM_START_TIME) / SCENE_ANIM_LEN;
-  const isolated = state.isolate >= 0 && state.isolate < data.instances.length
-    ? data.instances[state.isolate]
-    : null;
-  let shot = sampleCamera(state.camera, Math.min(t, DEMO_TOTAL_TIME));
-  let isolatedWorld = null;
-  if (isolated) {
-    isolatedWorld = worldOf(data, isolated, fpos);
-    shot = frameShot(isolated, isolatedWorld);
-  }
+  const shot = sampleCamera(state.camera, Math.min(t, DEMO_TOTAL_TIME));
   const view = viewRows(shot.pos, shot.look);
   const proj = projRows(height / width);
   const energy = intensityAt(t, state.pulses);
-  const showGeom = isolated || (shot.renderGeom && t < FINISH_STOP_TIME);
+  const showGeom = shot.renderGeom && t < FINISH_STOP_TIME;
+  setTitleGlow(energy.blob);
 
   gl.viewport(0, 0, width, height);
   gl.clearColor(0, 0, 0, 1);
@@ -1159,18 +1123,18 @@ function drawOfficial(width, height, t, theme) {
   official.blob.sim.seek(t);
 
   if (showGeom && theme.sceneRender) {
-    drawScene(gl, data, theme, shot, view, proj, energy, fpos, isolated, isolatedWorld);
+    drawScene(gl, data, theme, shot, view, proj, energy, fpos);
   }
 
-  if (!isolated && showGeom && theme.blobRender) {
+  if (showGeom && theme.blobRender) {
     drawBlob(gl, t, theme, shot, view, proj, energy);
   }
 
-  if (!isolated && showGeom && theme.shieldRender) {
+  if (showGeom && theme.shieldRender) {
     drawShields(gl, t, theme, shot, view, proj, energy);
   }
 
-  const fogOn = !isolated && theme.plasmaRender && ((showGeom && (energy.blob > 0 || t < BLOB_STATIC_END_TIME)) || t < BLOB_STATIC_END_TIME);
+  const fogOn = theme.plasmaRender && ((showGeom && (energy.blob > 0 || t < BLOB_STATIC_END_TIME)) || t < BLOB_STATIC_END_TIME);
   if (fogOn) {
   const clip = mul4(view, proj);
   const ow = clip[15] || 1;
@@ -1201,7 +1165,7 @@ function drawOfficial(width, height, t, theme) {
     gl.disable(gl.BLEND);
   }
 
-  if (!isolated && (shot.renderSlash || t >= FINISH_START_TIME) && state.camera.slash) {
+  if ((shot.renderSlash || t >= FINISH_START_TIME) && state.camera.slash) {
     const slash = slashRows(state.camera.slash);
     const span = SLASH_GRADIENT_END - SLASH_GRADIENT_START;
     const fmag = -1 + 2 * ((t - SLASH_GRADIENT_START) / span);
@@ -1270,7 +1234,7 @@ function drawOfficial(width, height, t, theme) {
     }
   }
 
-  if (!isolated && theme.brandRender && t > FINISH_STOP_TIME) {
+  if (theme.brandRender && t > FINISH_STOP_TIME) {
     drawBrand(gl, width, height, theme, Math.max(0, Math.min(1, (t - FINISH_STOP_TIME) / 0.45)));
   }
   if (state.sound) updateSound(t, energy.blob);
