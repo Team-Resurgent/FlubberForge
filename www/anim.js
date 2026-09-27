@@ -326,6 +326,7 @@ function syncThemeControls() {
     else if (field.kind === "color") el.value = cssHex(state.theme[field.key]);
     else el.value = String(state.theme[field.key]);
   }
+  syncDoodadHint();
 }
 
 function readThemeControls() {
@@ -337,10 +338,40 @@ function readThemeControls() {
     else state.theme[field.key] = parseInt(el.value, 10) || 0;
   }
   state.cameraKey = -1;
+  syncDoodadHint();
+}
+
+// Presets swap the palette only, so the picker sits above the groups rather
+// than inside one.
+function buildPresetPicker() {
+  const row = document.createElement("label");
+  row.className = "row";
+  const name = document.createElement("span");
+  name.textContent = "Preset";
+  row.appendChild(name);
+  const sel = document.createElement("select");
+  sel.id = "f-preset";
+  for (const preset of THEME_PRESETS) {
+    const opt = document.createElement("option");
+    opt.value = preset.name;
+    opt.textContent = preset.name;
+    sel.appendChild(opt);
+  }
+  sel.addEventListener("change", () => {
+    applyPreset(state.theme, sel.value);
+    state.cameraKey = -1;
+    syncThemeControls();
+  });
+  row.appendChild(sel);
+  return row;
 }
 
 function buildPanel() {
   const root = document.getElementById("fields");
+  const head = document.createElement("h2");
+  head.textContent = "Theme";
+  root.appendChild(head);
+  root.appendChild(buildPresetPicker());
   let group = "";
   for (const field of THEME_FIELDS) {
     if (field.group !== group) {
@@ -371,8 +402,41 @@ function buildPanel() {
     input.addEventListener("input", readThemeControls);
     row.appendChild(input);
     root.appendChild(row);
+    if (field.key === "enableDoodad") root.appendChild(buildDoodadHint());
   }
   syncThemeControls();
+}
+
+// The placement controls only exist while paused, so spell them out rather than
+// leaving them to be discovered.
+function buildDoodadHint() {
+  const box = document.createElement("div");
+  box.id = "doodad-hint";
+  box.className = "hint";
+  const note = document.createElement("p");
+  note.textContent = "Pause to place the look-at point.";
+  box.appendChild(note);
+  const rows = [
+    ["Drag", "orbit camera"],
+    ["Right-drag", "move target"],
+    ["Alt + right-drag", "raise / lower"],
+    ["Wheel", "zoom"],
+    ["N", "log path node"],
+  ];
+  for (const [key, what] of rows) {
+    const line = document.createElement("p");
+    const k = document.createElement("kbd");
+    k.textContent = key;
+    line.appendChild(k);
+    line.appendChild(document.createTextNode(" " + what));
+    box.appendChild(line);
+  }
+  return box;
+}
+
+function syncDoodadHint() {
+  const box = document.getElementById("doodad-hint");
+  if (box) box.style.display = state.theme.enableDoodad ? "block" : "none";
 }
 
 function applyIniText(text) {
@@ -381,6 +445,82 @@ function applyIniText(text) {
   syncThemeControls();
 }
 window.applyIniText = applyIniText;
+
+// Mouse stand-in for the gamepad in placement mode: drag orbits the camera,
+// right-drag slides the look-at across the ground plane, and shift swaps the
+// vertical axis onto world Z, the way app.cpp splits the two sticks.
+function wireDoodadMouse(canvas) {
+  let drag = null;
+
+  const active = () => state.theme.enableDoodad && !state.playing && state.free;
+
+  canvas.addEventListener("contextmenu", (e) => {
+    if (active()) e.preventDefault();
+  });
+
+  canvas.addEventListener("pointerdown", (e) => {
+    if (!active()) return;
+    drag = { x: e.clientX, y: e.clientY, move: e.button === 2 || e.shiftKey };
+    canvas.setPointerCapture(e.pointerId);
+    e.preventDefault();
+  });
+
+  canvas.addEventListener("pointermove", (e) => {
+    if (!drag || !active()) return;
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    drag.x = e.clientX;
+    drag.y = e.clientY;
+    const free = state.free;
+    if (drag.move) {
+      // Scaled by the camera distance, as doodad_rad does on hardware.
+      const k = free.rad * 0.0016;
+      const ax = doodadAxes(free.theta);
+      if (e.altKey) {
+        free.look.z -= dy * k;
+      } else {
+        free.look.x += (-ax.right.x * dx + ax.fwd.x * dy) * k;
+        free.look.y += (-ax.right.y * dx + ax.fwd.y * dy) * k;
+      }
+    } else {
+      free.theta -= dx * 0.006;
+      free.phi = Math.max(-Math.PI / 2 + 0.01, Math.min(Math.PI / 2 - 0.01, free.phi + dy * 0.006));
+    }
+  });
+
+  const end = (e) => {
+    if (!drag) return;
+    drag = null;
+    if (canvas.hasPointerCapture(e.pointerId)) canvas.releasePointerCapture(e.pointerId);
+  };
+  canvas.addEventListener("pointerup", end);
+  canvas.addEventListener("pointercancel", end);
+
+  canvas.addEventListener(
+    "wheel",
+    (e) => {
+      if (!active()) return;
+      e.preventDefault();
+      state.free.rad = Math.max(1, state.free.rad * Math.exp(e.deltaY * 0.001));
+    },
+    { passive: false }
+  );
+
+  // camera_controller::buttonPressed traced the framed shot out as a path row.
+  window.addEventListener("keydown", (e) => {
+    if (e.key !== "n" && e.key !== "N") return;
+    if (!active()) return;
+    const shot = freeCamShot({ look: null, pos: null }, state.free);
+    const f = (v) => (v >= 0 ? "+" : "") + v.toFixed(1) + "f";
+    console.log(
+      " { 0, +00, +00, " +
+        [shot.pos.x, shot.pos.y, shot.pos.z, shot.look.x, shot.look.y, shot.look.z]
+          .map(f)
+          .join(",") +
+        " },"
+    );
+  });
+}
 
 function wireUi() {
   document.getElementById("play").addEventListener("click", () => {
@@ -401,6 +541,8 @@ function wireUi() {
     if (state.sound) ensureSound();
     else stopSound();
   });
+  wireDoodadMouse(document.getElementById("view"));
+
   const scrub = document.getElementById("scrub");
   scrub.max = String(DEMO_TOTAL_TIME);
   scrub.addEventListener("input", () => {

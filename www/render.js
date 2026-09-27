@@ -630,6 +630,21 @@ function drawScene(gl, data, theme, shot, view, proj, energy, fpos) {
 // end of its animation, rendered from the origin into the six faces. The shield
 // shader adds this in as a mirror reflection, which is what stops the panels
 // reading as flat black.
+// The cube map bakes the scene's own colours into its faces, so it has to be
+// re-rendered whenever any of them move. Without this the shield goes on
+// reflecting the palette that was live when the page loaded.
+const ENV_CUBE_KEYS = [
+  "sceneAmbient",
+  "sceneDiffuse",
+  "sceneSpecular",
+  "sceneIntensity",
+  "sceneWireframe",
+];
+
+function envCubeKey(theme) {
+  return ENV_CUBE_KEYS.map((k) => theme[k]).join(",");
+}
+
 function makeReflectionCubeMap(gl, data, theme) {
   const size = 256;
   const faces = [
@@ -1047,10 +1062,15 @@ async function loadOfficial(canvas) {
   official.tmProg = program(gl, VS, FS_TM);
   official.tmTex = makeTmTexture(gl, data.tm);
   official.blob = makeBlobGpu(gl);
+  official.doodadProg = program(gl, VS_DOODAD, FS_DOODAD);
+  official.doodadBuf = gl.createBuffer();
   official.shieldProg = program(gl, VS_SHIELD, FS_SHIELD);
   official.shields = makeShieldGpu(gl, state.pulseRand);
   // Baked once at startup, as in app init, so later theme edits do not change it.
-  official.envCube = makeReflectionCubeMap(gl, data, state.theme);
+  // The cube map is baked on the first frame, and re-baked whenever the scene
+  // colours change.
+  official.envCube = null;
+  official.envKey = null;
   official.ready = true;
 }
 
@@ -1100,13 +1120,111 @@ function setTitleGlow(intensity) {
   document.documentElement.style.setProperty("--flubber", String(v));
 }
 
+// The doodad is only steerable while paused, matching app.cpp, which gives the
+// stick a deadband in that state so a shot can be framed precisely.
+function doodadActive() {
+  return state.theme.enableDoodad && !state.playing;
+}
+
+// Camera orbit around the look-at, the fCamRad/fCamTheta/fCamPhi trio from
+// app.cpp. Seeded from the scripted shot so taking control never jumps.
+function freeCamFrom(shot) {
+  const dx = shot.pos.x - shot.look.x;
+  const dy = shot.pos.y - shot.look.y;
+  const dz = shot.pos.z - shot.look.z;
+  const rad = Math.max(0.001, Math.hypot(dx, dy, dz));
+  return {
+    rad,
+    theta: Math.atan2(dy, dx),
+    phi: Math.asin(Math.max(-1, Math.min(1, dz / rad))),
+    look: { x: shot.look.x, y: shot.look.y, z: shot.look.z },
+  };
+}
+
+function freeCamShot(shot, free) {
+  const cp = Math.cos(free.phi);
+  return {
+    ...shot,
+    look: v3(free.look.x, free.look.y, free.look.z),
+    pos: v3(
+      free.look.x + free.rad * cp * Math.cos(free.theta),
+      free.look.y + free.rad * cp * Math.sin(free.theta),
+      free.look.z + free.rad * Math.sin(free.phi)
+    ),
+  };
+}
+
+// app.cpp forces the Z axis to world up and rebuilds the up vector from it, so
+// the target slides across the ground plane rather than across the view.
+function doodadAxes(theta) {
+  const right = { x: -Math.sin(theta), y: Math.cos(theta), z: 0 };
+  return { right, fwd: { x: -right.y, y: right.x, z: 0 } };
+}
+
+// placement_doodad marks the look-at point app.cpp is steering, so the shot can
+// be framed by eye. Unlit lines, since it is an authoring aid and not scenery.
+const VS_DOODAD = `
+attribute vec3 aPos;
+uniform mat4 uMvp;
+void main() { gl_Position = uMvp * vec4(aPos, 1.0); }
+`;
+
+const FS_DOODAD = `
+precision mediump float;
+uniform vec3 uColor;
+void main() { gl_FragColor = vec4(uColor, 1.0); }
+`;
+
+function drawDoodad(gl, look, view, proj, dist) {
+  const prog = official.doodadProg;
+  gl.useProgram(prog);
+  // Scaled by distance so the marker stays readable near and far, the way the
+  // gamepad move speed is scaled in app.cpp.
+  const r = Math.max(0.5, dist * 0.04);
+  const v = [];
+  for (let axis = 0; axis < 3; axis++) {
+    for (const sign of [-1, 1]) {
+      const p = [look.x, look.y, look.z];
+      v.push(look.x, look.y, look.z);
+      p[axis] += sign * r;
+      v.push(p[0], p[1], p[2]);
+    }
+  }
+  gl.bindBuffer(gl.ARRAY_BUFFER, official.doodadBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(v), gl.DYNAMIC_DRAW);
+  const loc = gl.getAttribLocation(prog, "aPos");
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, 3, gl.FLOAT, false, 0, 0);
+  gl.uniformMatrix4fv(gl.getUniformLocation(prog, "uMvp"), false, glMat(mul4(view, proj)));
+  gl.uniform3f(gl.getUniformLocation(prog, "uColor"), 1, 0.35, 0.1);
+  gl.disable(gl.DEPTH_TEST);
+  gl.drawArrays(gl.LINES, 0, v.length / 3);
+  gl.enable(gl.DEPTH_TEST);
+}
+
 function drawOfficial(width, height, t, theme) {
   if (!official.ready) return;
   const gl = official.gl;
   const data = official.data;
+  // Done before the viewport is set, since baking the faces leaves it sized to
+  // the cube face.
+  const envKey = envCubeKey(theme);
+  if (official.envKey !== envKey) {
+    if (official.envCube) gl.deleteTexture(official.envCube);
+    official.envCube = makeReflectionCubeMap(gl, data, theme);
+    official.envKey = envKey;
+  }
   rebuildCamera();
   const fpos = (t - SCENE_ANIM_START_TIME) / SCENE_ANIM_LEN;
-  const shot = sampleCamera(state.camera, Math.min(t, DEMO_TOTAL_TIME));
+  let shot = sampleCamera(state.camera, Math.min(t, DEMO_TOTAL_TIME));
+  if (doodadActive()) {
+    // Re-seed whenever the clock moves, so scrubbing returns to the scripted
+    // shot and only mouse edits persist.
+    if (!state.free || state.free.t !== t) state.free = { ...freeCamFrom(shot), t };
+    shot = freeCamShot(shot, state.free);
+  } else {
+    state.free = null;
+  }
   const view = viewRows(shot.pos, shot.look);
   const proj = projRows(height / width);
   const energy = intensityAt(t, state.pulses);
@@ -1163,6 +1281,11 @@ function drawOfficial(width, height, t, theme) {
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
     gl.depthMask(true);
     gl.disable(gl.BLEND);
+  }
+
+  if (theme.enableDoodad && showGeom) {
+    const d = Math.hypot(shot.pos.x - shot.look.x, shot.pos.y - shot.look.y, shot.pos.z - shot.look.z);
+    drawDoodad(gl, shot.look, view, proj, d);
   }
 
   if ((shot.renderSlash || t >= FINISH_START_TIME) && state.camera.slash) {

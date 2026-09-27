@@ -1,11 +1,12 @@
 // Theme keys match BootAnimRXDK BootAnimConfigData / bootanim.ini.
 const DEFAULT_THEME = {
   cameraMode: 1,
+  enableDoodad: false,
   plasmaRender: true,
   plasma1: 0x00ff00,
   plasma2: 0x9fff66,
   plasma3: 0xa0ff60,
-  shieldRender: true,
+  shieldRender: false,
   shieldWireframe: false,
   shield: 0x66ff4d,
   blobRender: true,
@@ -39,6 +40,9 @@ const DEFAULT_THEME = {
 };
 
 const THEME_FIELDS = [
+  // app.cpp keeps the authoring aids behind EnableDoodad, so they group
+  // together ahead of the look of the scene.
+  { group: "Debug", key: "enableDoodad", ini: "EnableDoodad", kind: "bool" },
   { group: "Camera", key: "cameraMode", ini: "cameraMode", kind: "int", min: 0, max: 15 },
   { group: "Plasma", key: "plasmaRender", ini: "PlasmaRender", kind: "bool" },
   { group: "Plasma", key: "plasma1", ini: "Plasma1", kind: "color" },
@@ -76,6 +80,70 @@ const THEME_FIELDS = [
   { group: "Marks", key: "brandRender", ini: "BrandRender", kind: "bool" },
   { group: "Marks", key: "brand", ini: "Brand", kind: "color" },
 ];
+
+// Presets only move colours. Render toggles, wireframes and camera mode are
+// left alone, so picking a theme never changes what is drawn.
+const THEME_COLOR_KEYS = THEME_FIELDS.filter((f) => f.kind === "color").map((f) => f.key);
+
+// Red is the default palette with its red and green channels swapped. The
+// stock theme is green-dominant, so the swap carries every relationship
+// between the colours across intact rather than being re-picked by hand.
+function swapRedGreen(hex) {
+  return (((hex >> 8) & 0xff) << 16) | (((hex >> 16) & 0xff) << 8) | (hex & 0xff);
+}
+
+function redPalette() {
+  const out = {};
+  for (const key of THEME_COLOR_KEYS) out[key] = swapRedGreen(DEFAULT_THEME[key]);
+  return out;
+}
+
+const THEME_PRESETS = [
+  { name: "Green", colors: null, flags: { shieldRender: false } },
+  {
+    name: "Blue",
+    flags: { shieldRender: true },
+    colors: {
+      plasma1: 0x0000ff,
+      plasma2: 0x0000ff,
+      plasma3: 0x0000ff,
+      shield: 0xff00ff,
+      blobColor: 0x283fff,
+      blobGlow: 0xa040ff,
+      sceneAmbient: 0x3519ff,
+      sceneDiffuse: 0x3519ff,
+      sceneSpecular: 0x3519ff,
+      slashBackgroundStart: 0x000000,
+      slashBackgroundEnd: 0xffffff,
+      slashLipGradientStart: 0x000100,
+      slashLipGradientEnd: 0x7a7aff,
+      slashInnerStage1Gradient1: 0xffffff,
+      slashInnerStage1Gradient2: 0xffffff,
+      slashInnerStage1Gradient3: 0x7a7aff,
+      slashInnerStage1Gradient4: 0x7a7aff,
+      slashInnerStage2Gradient1: 0x7a7aff,
+      slashInnerStage2Gradient2: 0x7a7aff,
+      slashInnerStage2Gradient3: 0xccccff,
+      slashInnerStage2Gradient4: 0x0000d6,
+      tradeMark: 0x7477ff,
+      xbox: 0x7477ff,
+      brand: 0x7477ff,
+    },
+  },
+  { name: "Red", colors: redPalette(), flags: { shieldRender: false } },
+];
+
+// Colours always move as a set. A preset may also carry a few render flags
+// where they are part of the look, but nothing else is touched.
+function applyPreset(theme, name) {
+  const preset = THEME_PRESETS.find((p) => p.name === name);
+  if (!preset) return;
+  const colors = preset.colors;
+  for (const key of THEME_COLOR_KEYS) {
+    theme[key] = colors && key in colors ? colors[key] : DEFAULT_THEME[key];
+  }
+  for (const key of Object.keys(preset.flags || {})) theme[key] = preset.flags[key];
+}
 
 function cloneTheme(src) {
   return Object.assign({}, src);
