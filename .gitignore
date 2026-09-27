@@ -1,0 +1,9 @@
+bin/
+obj/
+preview/
+shots/
+node_modules/
+*.user
+
+tools/DevServer/bin/
+tools/DevServer/obj/

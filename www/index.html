@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BootAnim</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #101114;
+      --panel: #181a1f;
+      --line: #2a2d34;
+      --text: #e7e8ea;
+      --muted: #9aa0a8;
+      --accent: #6dbe3a;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.4 "Segoe UI", sans-serif; }
+    body { display: grid; grid-template-columns: 1fr 300px; }
+    #stage { position: relative; min-width: 0; min-height: 0; }
+    #view { width: 100%; height: 100%; display: block; background: #000; }
+    #hud {
+      position: absolute; left: 12px; right: 12px; bottom: 12px;
+      display: flex; gap: 8px; align-items: center;
+      padding: 8px 10px; background: rgba(16, 17, 20, 0.82);
+      border: 1px solid var(--line); border-radius: 8px;
+    }
+    button, label.file {
+      background: #24272e; color: var(--text); border: 1px solid var(--line);
+      border-radius: 6px; padding: 4px 10px; cursor: pointer;
+    }
+    button:hover, label.file:hover { border-color: var(--accent); }
+    #scrub { flex: 1; accent-color: var(--accent); }
+    #clock { min-width: 52px; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .check { display: flex; gap: 4px; align-items: center; color: var(--muted); }
+    aside {
+      background: var(--panel); border-left: 1px solid var(--line);
+      display: flex; flex-direction: column; min-height: 0;
+    }
+    aside header {
+      padding: 12px 14px 8px; border-bottom: 1px solid var(--line);
+    }
+    aside header h1 {
+      margin: 0; font-size: 22px; font-weight: 700; letter-spacing: 0.06em;
+      color: #cfffbe;
+      /* The blob's own glow: a tight white-green core bleeding out to the
+         Shield colour, breathing at roughly the pulse rate. */
+      text-shadow:
+        0 0 4px #dcffd0, 0 0 10px #66ff4d, 0 0 22px rgba(102, 255, 77, 0.75),
+        0 0 44px rgba(64, 210, 48, 0.45);
+      animation: flubber 3.4s ease-in-out infinite;
+    }
+    @keyframes flubber {
+      50% {
+        color: #f2fff0;
+        text-shadow:
+          0 0 5px #ffffff, 0 0 14px #8dff70, 0 0 34px rgba(102, 255, 77, 0.9),
+          0 0 64px rgba(80, 230, 60, 0.6);
+      }
+    }
+    @media (prefers-reduced-motion: reduce) { aside header h1 { animation: none; } }
+    aside header p { margin: 6px 0 0; color: var(--muted); }
+    #fields { overflow: auto; padding: 8px 14px 16px; }
+    #fields h2 { margin: 14px 0 6px; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+    .row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin: 4px 0; }
+    .row span { color: var(--text); }
+    input[type="color"] { width: 42px; height: 24px; padding: 0; border: 1px solid var(--line); background: transparent; }
+    input[type="number"] { width: 64px; background: #101114; color: var(--text); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+    .actions { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+    input[type="file"] { display: none; }
+  </style>
+</head>
+<body>
+  <div id="stage">
+    <canvas id="view"></canvas>
+    <div id="hud">
+      <button id="play" type="button">Pause</button>
+      <button id="restart" type="button">Restart</button>
+      <input id="scrub" type="range" min="0" max="8" step="0.01" value="0" />
+      <span id="clock">0.00s</span>
+      <label class="check"><input id="loop" type="checkbox" checked /> Loop</label>
+      <button id="prim-prev" type="button" title="Previous primitive">◀</button>
+      <input id="prim" type="number" min="-1" step="1" value="-1" title="Primitive index, -1 draws the whole scene" />
+      <button id="prim-next" type="button" title="Next primitive">▶</button>
+      <span id="prim-label">all</span>
+      <label class="check"><input id="sound" type="checkbox" /> Sound</label>
+    </div>
+  </div>
+  <aside>
+    <header>
+      <h1>Flubber Forge</h1>
+      <p>bootanim.ini colors. Space pauses, R restarts.</p>
+    </header>
+    <div id="fields"></div>
+    <div class="actions">
+      <label class="file">Open ini<input id="ini" type="file" accept=".ini,text/plain" /></label>
+      <button id="save" type="button">Save ini</button>
+      <button id="reset" type="button">Reset</button>
+    </div>
+  </aside>
+  <script src="theme.js"></script>
+  <script src="camera.js"></script>
+  <script src="blob.js"></script>
+  <script src="shields.js"></script>
+  <script src="render.js"></script>
+  <script src="anim.js"></script>
+</body>
+</html>

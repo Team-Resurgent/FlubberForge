@@ -1,0 +1,66 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to build when run by hand
+        required: true
+        default: 0.0.0
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Resolve version
+        id: v
+        shell: pwsh
+        run: |
+          $v = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME -replace '^v','' }
+               else { '${{ inputs.version }}' }
+          "version=$v" >> $env:GITHUB_OUTPUT
+          "name=FlubberForge-$v-win-x64" >> $env:GITHUB_OUTPUT
+
+      # Self-contained, so the zip runs without a .NET install. The player's
+      # www folder is Content in the csproj and lands beside the exe.
+      - name: Publish
+        shell: pwsh
+        run: >
+          dotnet publish BootAnimWeb.csproj
+          -c Release -r win-x64 --self-contained true
+          -p:Version=${{ steps.v.outputs.version }}
+          -o publish
+
+      - name: Check the payload
+        shell: pwsh
+        run: |
+          foreach ($f in 'publish/FlubberForge.exe', 'publish/www/index.html', 'publish/www/geometry.json') {
+            if (-not (Test-Path $f)) { throw "missing $f" }
+          }
+
+      - name: Zip
+        shell: pwsh
+        run: Compress-Archive -Path publish/* -DestinationPath "${{ steps.v.outputs.name }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.v.outputs.name }}
+          path: ${{ steps.v.outputs.name }}.zip
+
+      - name: Release
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: ${{ steps.v.outputs.name }}.zip
+          generate_release_notes: true
