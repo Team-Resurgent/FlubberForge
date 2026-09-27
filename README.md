@@ -2,12 +2,12 @@
 
 <p align="center"><b>The original Xbox boot animation, rebuilt as a static WebGL canvas — real extracted geometry, real camera paths, real timing, and live <code>bootanim.ini</code> theming</b></p>
 
-<p align="center"><a href="https://team-resurgent.github.io/flubberforge/"><b>▶ Run it and read the docs at team-resurgent.github.io/flubberforge</b></a></p>
+<p align="center"><a href="https://team-resurgent.github.io/FlubberForge/"><b>▶ Run it and read the docs at team-resurgent.github.io/FlubberForge</b></a></p>
 
 <p align="center">
-  <a href="https://team-resurgent.github.io/flubberforge/"><img src="https://img.shields.io/badge/docs%20%26%20demo-live-44cc11?logo=githubpages&logoColor=white" alt="Docs and live demo"></a>
-  <a href="https://github.com/Team-Resurgent/flubberforge/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
-  <a href="https://github.com/Team-Resurgent/flubberforge/releases"><img src="https://img.shields.io/github/v/release/Team-Resurgent/flubberforge?label=Release&logo=github" alt="Release"></a>
+  <a href="https://team-resurgent.github.io/FlubberForge/"><img src="https://img.shields.io/badge/docs%20%26%20demo-live-44cc11?logo=githubpages&logoColor=white" alt="Docs and live demo"></a>
+  <a href="https://github.com/Team-Resurgent/FlubberForge/blob/main/LICENSE"><img src="https://img.shields.io/badge/License-GPLv3-blue.svg" alt="License: GPL v3"></a>
+  <a href="https://github.com/Team-Resurgent/FlubberForge/releases"><img src="https://img.shields.io/github/v/release/Team-Resurgent/FlubberForge?label=Release&logo=github" alt="Release"></a>
   <a href="https://discord.gg/VcdSfajQGK"><img src="https://img.shields.io/badge/chat-on%20discord-7289da.svg?logo=discord" alt="Discord"></a>
 </p>
 
@@ -59,7 +59,7 @@ without fighting the browser cache.
 ## Desktop app
 
 There is also a WinForms shell that wraps the same folder in a WebView2 window.
-Grab the zip from [Releases](https://github.com/Team-Resurgent/flubberforge/releases),
+Grab the zip from [Releases](https://github.com/Team-Resurgent/FlubberForge/releases),
 unpack it anywhere and run `FlubberForge.exe` — it is self-contained, so no
 .NET install is needed. `www/` travels inside the zip next to the executable.
 
